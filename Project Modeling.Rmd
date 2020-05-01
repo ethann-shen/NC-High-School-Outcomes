@@ -1,0 +1,151 @@
+---
+title: "Project Modeling"
+author: "Ethan Shen"
+date: "`r format(Sys.time(), '%B %d %Y')`"
+output: html_document
+---
+
+```{r}
+library(tidyverse) 
+```
+
+```{r}
+school_df_final <- read_csv("school_df_final.csv")
+school_df_final <- school_df_final %>%
+  mutate(growth_status = case_when(
+    growth_status == "Exceeded" ~ 1, 
+    growth_status == "Met" ~ 0,
+    growth_status == "Not Met" ~ -1
+  ),
+  growth_status = as.factor(growth_status),
+  title_1 = as.factor(title_1)) %>% 
+  na.omit()
+
+smp_size <- floor(0.75 * nrow(school_df_final))
+
+## set the seed to make your partition reproducible
+set.seed(123)
+train_ind <- sample(seq_len(nrow(school_df_final)), size = smp_size)
+```
+
+```{r echo=FALSE, message=FALSE}
+train <- school_df_final[train_ind, ]
+
+is_dbl_train <- train %>%
+  select_if(is.double) 
+is_dbl_train = scale(is_dbl_train) %>%
+  as.data.frame()
+not_dbl_train <- train %>%
+  select_if(negate(is.double))
+
+training <- bind_cols(is_dbl_train, not_dbl_train)
+training$growth_status <- train$growth_status
+training <- training %>%
+  dplyr::select(growth_status, everything())
+```
+
+```{r echo=FALSE, message=FALSE}
+test <- school_df_final[-train_ind, ]
+
+is_dbl_test <- test %>%
+  select_if(is.double) 
+is_dbl_test = scale(is_dbl_test) %>%
+  as.data.frame()
+not_dbl_test <- test %>%
+  select_if(negate(is.double))
+
+testing <- bind_cols(is_dbl_test, not_dbl_test)
+testing$growth_status <- test$growth_status
+testing <- testing %>%
+  dplyr::select(growth_status, everything()) 
+```
+
+## SVM 
+
+```{r}
+library(e1071) 
+set.seed(123)
+kernels = c("linear", "polynomial", "radial", "sigmoid")
+types = c("C-classification", "nu-classification")
+
+for (kernel in kernels) {
+  for (type in types) {
+    SVM = svm(formula = growth_status ~ .-school_code-school_name-growth_index_score, 
+              data = training, 
+              type = type, 
+              kernel = kernel) 
+    SVM_pred = predict(SVM, newdata = testing[-1]) 
+    cm = table(SVM_pred, testing[, 1])
+    cr = sum(diag(cm))/sum(cm)
+    print(paste(type, "," ,kernel, "," , cr));
+  }
+}
+```
+
+```{r}
+SVM = svm(formula = growth_status ~ .-school_code-school_name-growth_index_score, 
+          data = training, 
+          type = "nu-classification", 
+          kernel = "radial") 
+summary(SVM)
+SVM_pred = predict(SVM, newdata = testing[-1]) 
+cm = table(SVM_pred, testing[, 1])
+cm
+sum(diag(cm))/sum(cm)
+```
+
+## Naive Bayes 
+
+```{r warning=FALSE, message=FALSE}
+library(caret)
+set.seed(123)
+features <- setdiff(names(train), "growth_status")
+x <- train[, features]
+x <- x %>%
+  dplyr::select(-school_code, -school_name, -growth_index_score)
+y <- as.factor(train$growth_status)
+
+train_control <- trainControl(
+  method = "cv", 
+  number = 7
+)
+
+nb.m1 <- caret::train(
+  x = x,
+  y = y,
+  method = "nb",
+  trControl = train_control
+)
+confusionMatrix(nb.m1)
+
+NB_pred <- predict(nb.m1, newdata = testing[-1])
+
+confusionMatrix(NB_pred, testing$growth_status)
+```
+
+## Random Forest 
+
+```{r}
+set.seed(123)
+control <- trainControl(method="repeatedcv", number=10, repeats=3, search="random")
+mtry <- 4
+metric <- "Accuracy"
+rf_random <- train(growth_status ~ .-school_code-school_name-growth_index_score, 
+                   data=training, method="rf", metric=metric, tuneLength=15, trControl=control)
+print(rf_random)
+confusionMatrix(rf_random)
+plot(rf_random)
+```
+
+## Ordered Logistic 
+
+```{r}
+set.seed(123)
+ord.logistic <- polr(growth_status ~ percent_white + percent_male + percent_eds + percent_swd + percent_ACTEN_meeting + percent_ACTMA_meeting + percent_ACTRD_meeting + percent_ACTSC_meeting + percent_ACTWR_meeting + percent_ACT_meeting + missed_school_days + title_1 + region,
+                     data = training, Hess=TRUE)
+
+OL_pred = predict(ord.logistic,testing)
+cm = table(OL_pred, testing$growth_status)
+cm
+sum(diag(cm))/sum(cm)
+```
