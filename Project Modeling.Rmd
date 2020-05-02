@@ -13,12 +13,12 @@ library(tidyverse)
 school_df_final <- read_csv("school_df_final.csv")
 school_df_final <- school_df_final %>%
   mutate(growth_status = case_when(
-    growth_status == "Exceeded" ~ 1, 
+    growth_status == "Exceeded" ~ 1,
     growth_status == "Met" ~ 0,
     growth_status == "Not Met" ~ -1
   ),
   growth_status = as.factor(growth_status),
-  title_1 = as.factor(title_1)) %>% 
+  title_1 = as.factor(title_1)) %>%
   na.omit()
 
 smp_size <- floor(0.75 * nrow(school_df_final))
@@ -59,6 +59,100 @@ testing$growth_status <- test$growth_status
 testing <- testing %>%
   dplyr::select(growth_status, everything()) 
 ```
+
+# Without Region 
+
+## SVM 
+
+```{r}
+library(e1071) 
+set.seed(123)
+kernels = c("linear", "polynomial", "radial", "sigmoid")
+types = c("C-classification", "nu-classification")
+
+for (kernel in kernels) {
+  for (type in types) {
+    SVM = svm(formula = growth_status ~ .-school_code-school_name-growth_index_score-region, 
+              data = training, 
+              type = type, 
+              kernel = kernel) 
+    SVM_pred = predict(SVM, newdata = testing[-1]) 
+    cm = table(SVM_pred, testing[, 1])
+    cr = sum(diag(cm))/sum(cm)
+    print(paste(type, "," ,kernel, "," , cr));
+  }
+}
+```
+
+```{r}
+SVM = svm(formula = growth_status ~ .-school_code-school_name-growth_index_score, 
+          data = training, 
+          type = "C-classification", 
+          kernel = "radial") 
+summary(SVM)
+SVM_pred = predict(SVM, newdata = testing[-1]) 
+cm = table(SVM_pred, testing[, 1])
+cm
+sum(diag(cm))/sum(cm)
+```
+
+## Naive Bayes 
+
+```{r warning=FALSE, message=FALSE}
+library(caret)
+set.seed(123)
+features <- setdiff(names(train), "growth_status")
+x <- train[, features]
+x <- x %>%
+  dplyr::select(-school_code, -school_name, -growth_index_score, -region)
+y <- as.factor(train$growth_status)
+
+train_control <- trainControl(
+  method = "cv", 
+  number = 7
+)
+
+nb.m1 <- caret::train(
+  x = x,
+  y = y,
+  method = "nb",
+  trControl = train_control
+)
+confusionMatrix(nb.m1)
+
+NB_pred <- predict(nb.m1, newdata = testing[-1])
+
+confusionMatrix(NB_pred, testing$growth_status)
+```
+
+## Random Forest 
+
+```{r}
+set.seed(123)
+control <- trainControl(method="repeatedcv", number=10, repeats=3, search="random")
+mtry <- 4
+metric <- "Accuracy"
+rf_random <- train(growth_status ~ .-school_code-school_name-growth_index_score-region, 
+                   data=training, method="rf", metric=metric, tuneLength=15, trControl=control)
+print(rf_random)
+confusionMatrix(rf_random)
+plot(rf_random)
+```
+
+## Ordered Logistic 
+
+```{r}
+library(MASS)
+set.seed(123)
+ord.logistic <- polr(growth_status ~ percent_white + percent_male + percent_eds + percent_swd + percent_ACTEN_meeting + percent_ACTMA_meeting + percent_ACTRD_meeting + percent_ACTSC_meeting + percent_ACTWR_meeting + percent_ACT_meeting + missed_school_days + title_1,
+                     data = training, Hess=TRUE)
+OL_pred = predict(ord.logistic,testing)
+cm = table(OL_pred, testing$growth_status)
+cm
+sum(diag(cm))/sum(cm)
+```
+
+# With Region 
 
 ## SVM 
 
@@ -143,7 +237,6 @@ plot(rf_random)
 set.seed(123)
 ord.logistic <- polr(growth_status ~ percent_white + percent_male + percent_eds + percent_swd + percent_ACTEN_meeting + percent_ACTMA_meeting + percent_ACTRD_meeting + percent_ACTSC_meeting + percent_ACTWR_meeting + percent_ACT_meeting + missed_school_days + title_1 + region,
                      data = training, Hess=TRUE)
-
 OL_pred = predict(ord.logistic,testing)
 cm = table(OL_pred, testing$growth_status)
 cm
